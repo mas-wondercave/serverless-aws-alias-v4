@@ -1,0 +1,33 @@
+{
+	"name": "serverless-aws-alias-v4",
+	"version": "0.3.0-rc",
+	"description": "Serverless Framework Plugin to manage AWS Lambda aliases and API Gateway integrations",
+	"license": "MIT",
+	"author": {
+		"name": "Alexandre Castlenine",
+		"url": "https://github.com/Castlenine"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/castlenine/serverless-aws-alias-v4.git"
+	},
+	"bugs": {
+		"url": "https://github.com/castlenine/serverless-aws-alias-v4/issues"
+	},
+	"keywords": [
+		"alias",
+		"api-gateway",
+		"aws",
+		"lambda",
+		"serverless-plugin",
+		"serverless",
+		"v4"
+	],
+	"main": "src/index.js",
+	"scripts": {
+		"publish-package": "npm publish --access public"
+	},
+	"peerDependencies": {
+		"serverless": ">=4.0.0"
+	}
+}
