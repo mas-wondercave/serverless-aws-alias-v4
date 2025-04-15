@@ -190,7 +190,7 @@ class ServerlessLambdaAliasPlugin {
 	 */
 	async deployAliasWorkflow() {
 		try {
-			this.serverless.cli.log(`${PLUGIN_NAME}: Starting alias deployment workflow...`, 'info');
+			this.debugLog(`${PLUGIN_NAME}: Starting alias deployment workflow...`, 'info');
 
 			// Get AWS account ID (needed for ARNs)
 			await this.getAwsAccountId();
@@ -213,10 +213,7 @@ class ServerlessLambdaAliasPlugin {
 				await this.updateApiGatewayIntegrations(FUNCTIONS, CREATED_ALIASES);
 			}
 
-			this.serverless.cli.log(
-				`${PLUGIN_NAME}: Successfully deployed aliases for ${CREATED_ALIASES.length} functions.`,
-				'info',
-			);
+			this.debugLog(`${PLUGIN_NAME}: Successfully deployed aliases for ${CREATED_ALIASES.length} functions.`, 'info');
 		} catch (error) {
 			this.debugLog(`Error in alias deployment workflow: ${error.message}`, true, 'error');
 			this.debugLog(error.stack, false, 'error');
@@ -564,7 +561,7 @@ class ServerlessLambdaAliasPlugin {
 	 */
 	findResourceByPath(resources, path) {
 		// Normalize path (remove leading slash if present)
-		const NORMALIZED_PATH = path.replace(/^\//, '');
+		const NORMALIZED_PATH = path.startsWith('/') ? path : `/${path}`;
 
 		// First check the cache
 		if (this.config.apiGatewayResourceCache.has(NORMALIZED_PATH)) {
@@ -588,16 +585,32 @@ class ServerlessLambdaAliasPlugin {
 	async addLambdaPermission(alias, resourceId, method) {
 		try {
 			const LAMBDA = new this.provider.sdk.Lambda({ region: this.config.region });
-			const SOURCE_ARN = `arn:aws:execute-api:${this.config.region}:${this.config.accountId}:${this.config.restApiId}/*/${method}/${resourceId}`;
-			const STATEMENT_ID = `apigateway-${this.config.restApiId}-${resourceId}-${method}`.replace(/[^a-zA-Z0-9-_]/g, '-');
 
-			this.debugLog(`Adding permission for API Gateway to invoke Lambda alias: ${alias.aliasArn}`);
+			// Get the qualified function ARN with the alias
+			const QUALIFIED_FUNCTION_NAME = `${alias.functionName}:${this.config.alias}`;
 
-			// Try to remove any existing permission first to avoid duplicates
+			// Create statement IDs for both the specific stage and for test invocations
+			const STAGE_STATEMENT_ID =
+				`apigateway-${this.config.restApiId}-${this.config.alias}-${method}-${resourceId}`.replace(
+					/[^a-zA-Z0-9-_]/g,
+					'-',
+				);
+			const TEST_STATEMENT_ID =
+				`apigateway-test-${this.config.restApiId}-${this.config.alias}-${method}-${resourceId}`.replace(
+					/[^a-zA-Z0-9-_]/g,
+					'-',
+				);
+
+			// Both stage invocation and test invocation need permissions
+			const SOURCE_ARN = `arn:aws:execute-api:${this.config.region}:${this.config.accountId}:${this.config.restApiId}/*/${method}/*`;
+
+			this.debugLog(`Adding permission for API Gateway to invoke Lambda alias: ${QUALIFIED_FUNCTION_NAME}`);
+
+			// Try to remove any existing permissions first
 			try {
 				await LAMBDA.removePermission({
-					FunctionName: alias.aliasArn,
-					StatementId: STATEMENT_ID,
+					FunctionName: QUALIFIED_FUNCTION_NAME,
+					StatementId: STAGE_STATEMENT_ID,
 				}).promise();
 			} catch (error) {
 				// Ignore if the permission doesn't exist
@@ -606,17 +619,38 @@ class ServerlessLambdaAliasPlugin {
 				}
 			}
 
-			// Add the new permission
+			try {
+				await LAMBDA.removePermission({
+					FunctionName: QUALIFIED_FUNCTION_NAME,
+					StatementId: TEST_STATEMENT_ID,
+				}).promise();
+			} catch (error) {
+				// Ignore if the permission doesn't exist
+				if (error.code !== 'ResourceNotFoundException') {
+					this.debugLog(`Warning: ${error.message}`, false, 'warning');
+				}
+			}
+
+			// Add the stage invocation permission
 			await LAMBDA.addPermission({
-				FunctionName: alias.aliasArn,
-				StatementId: STATEMENT_ID,
+				FunctionName: QUALIFIED_FUNCTION_NAME,
+				StatementId: STAGE_STATEMENT_ID,
 				Action: 'lambda:InvokeFunction',
 				Principal: 'apigateway.amazonaws.com',
 				SourceArn: SOURCE_ARN,
 			}).promise();
 
+			// Add permission for test invocations
+			await LAMBDA.addPermission({
+				FunctionName: QUALIFIED_FUNCTION_NAME,
+				StatementId: TEST_STATEMENT_ID,
+				Action: 'lambda:InvokeFunction',
+				Principal: 'apigateway.amazonaws.com',
+				SourceArn: `arn:aws:execute-api:${this.config.region}:${this.config.accountId}:${this.config.restApiId}/test-invoke-stage/${method}/*`,
+			}).promise();
+
 			this.debugLog(
-				`Successfully added permission for API Gateway to invoke Lambda alias: ${alias.aliasArn}`,
+				`Successfully added permission for API Gateway to invoke Lambda alias: ${QUALIFIED_FUNCTION_NAME}`,
 				false,
 				'success',
 			);
@@ -636,13 +670,16 @@ class ServerlessLambdaAliasPlugin {
 			const API_GATEWAY = new this.provider.sdk.APIGateway({ region: this.config.region });
 			const STAGE = this.provider.getStage();
 
-			await API_GATEWAY.createDeployment({
+			// Create a new deployment
+			const DEPLOYMENT = await API_GATEWAY.createDeployment({
 				restApiId: this.config.restApiId,
 				stageName: STAGE,
 				description: `Deployed by ${PLUGIN_NAME} for alias: ${this.config.alias}`,
 			}).promise();
 
-			// Add stage variable for environment
+			this.debugLog(`Created deployment with ID: ${DEPLOYMENT.id} for stage: ${STAGE}`);
+
+			// Update stage variables
 			await API_GATEWAY.updateStage({
 				restApiId: this.config.restApiId,
 				stageName: STAGE,
@@ -654,6 +691,12 @@ class ServerlessLambdaAliasPlugin {
 					},
 				],
 			}).promise();
+
+			this.debugLog(`Set stage variable 'alias=${this.config.alias}' for stage: ${STAGE}`);
+
+			// Print endpoint URL
+			const ENDPOINT_URL = `https://${this.config.restApiId}.execute-api.${this.config.region}.amazonaws.com/${STAGE}`;
+			this.debugLog(`${PLUGIN_NAME}: API Gateway endpoint: ${ENDPOINT_URL}`, 'info');
 
 			this.debugLog(`Successfully deployed API Gateway to stage: ${STAGE}`, false, 'success');
 		} catch (error) {
