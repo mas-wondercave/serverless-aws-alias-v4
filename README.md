@@ -1,6 +1,11 @@
-# serverless-aws-alias-v4
+<div align="center">
+
+# `serverless-aws-alias-v4`
+
+[![npm.badge]][npm] [![download.badge]][download] [![contribution.badge]][contribution]
 
 Serverless framework plugin to manage AWS Lambda aliases and API Gateway integrations
+</div>
 
 ## RELEASE CANDIDATE. USE AT YOUR OWN RISK
 
@@ -56,7 +61,7 @@ custom:
       - some-function
 ```
 
-When using the `serverless-plugin-warmup` plugin, ensure you add the following exclusion to your configuration:
+If you're using the `serverless-plugin-warmup` plugin alongside this plugin and don't want to create an alias for the warmup function, make sure to add it to your excluded functions configuration:
 
 ```yaml
 custom:
@@ -68,22 +73,6 @@ custom:
   alias:
     excludedFunctions:
       - warmUpPluginDefault
-```
-
-To handle AWS rate limits, the plugin implements a retry mechanism. By default, it will retry operations up to 3 times if a rate limit is encountered. You can customize the number of retries in your configuration:
-
-```yaml
-custom:
-  alias:
-    maxRetries: 5
-
-custom:
-  alias:
-    name: dev
-    maxRetries: 5
-# or (will fallback to provider stage)
-  alias:
-    maxRetries: 5
 ```
 
 ## Debugging
@@ -92,3 +81,21 @@ By default, only error messages are displayed. To view detailed logs, use one of
 
 - Set the environment variable `SLS_DEBUG=*`
 - Use the `--verbose` flag when deploying: `sls deploy --verbose`
+- Enable verbose logging in your alias configuration:
+
+```yaml
+custom:
+  alias:
+    name: dev
+    verbose: true
+# or (will fallback to provider stage)
+  alias:
+    verbose: true
+```
+
+[npm]: https://www.npmjs.com/package/serverless-aws-alias-v4
+[npm.badge]: https://img.shields.io/npm/v/serverless-aws-alias-v4
+[download]: https://www.npmjs.com/package/serverless-aws-alias-v4
+[download.badge]: https://img.shields.io/npm/d18m/serverless-aws-alias-v4
+[contribution]: https://github.com/Castlenine/serverless-aws-alias-v4
+[contribution.badge]: https://img.shields.io/badge/contributions-welcome-green

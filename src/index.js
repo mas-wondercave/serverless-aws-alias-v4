@@ -14,9 +14,9 @@ class ServerlessLambdaAliasPlugin {
 		this.config = {
 			alias: this.stage, // Default alias to stage
 			excludedFunctions: new Set(),
-			maxRetries: 3,
 			apiGatewayResourceCache: new Map(),
 			accountId: null,
+			verbose: false,
 			region: this.provider.getRegion(),
 			stackName: this.provider.naming.getStackName(),
 			restApiId: this.serverless.service.provider.apiGateway?.restApiId,
@@ -34,7 +34,7 @@ class ServerlessLambdaAliasPlugin {
 	 * Uses different colors for better readability.
 	 */
 	debugLog(message, force = false, type = 'info') {
-		if (IS_DEBUG || force) {
+		if (IS_DEBUG || this.config.verbose || force) {
 			let color = '\x1b[0m'; // Reset color
 			switch (type) {
 				case 'success':
@@ -70,15 +70,14 @@ class ServerlessLambdaAliasPlugin {
 		// Load excluded functions
 		this.config.excludedFunctions = new Set(CUSTOM_ALIAS_CONFIG.excludedFunctions || []);
 
-		// Load max retries
-		this.config.maxRetries = CUSTOM_ALIAS_CONFIG.maxRetries || 3;
+		// Verbose logging
+		this.config.verbose = CUSTOM_ALIAS_CONFIG.verbose || false;
 
 		// Update REST API ID from potential provider configuration
 		this.config.restApiId = this.serverless.service.provider.apiGateway?.restApiId || this.config.restApiId;
 
 		this.debugLog(`Initialized with Alias: ${this.config.alias}`, false, 'success');
 		this.debugLog(`Region: ${this.config.region}`);
-		this.debugLog(`Max Retries: ${this.config.maxRetries}`);
 		if (this.config.excludedFunctions.size > 0) {
 			this.debugLog(`Excluded Functions: ${Array.from(this.config.excludedFunctions).join(', ')}`);
 		}
@@ -513,8 +512,20 @@ class ServerlessLambdaAliasPlugin {
 				httpMethod: httpEvent.method,
 			}).promise();
 
+			if (INTEGRATION) {
+				this.debugLog(`Current integration: ${JSON.stringify(INTEGRATION, null, 2)}`, false, 'info');
+			} else {
+				this.debugLog(
+					`No integration found for path: ${httpEvent.path}, method: ${httpEvent.method}`,
+					false,
+					'warning',
+				);
+			}
+
 			// Create the new integration URI pointing to the alias
-			const URI = `arn:aws:apigateway:${this.config.region}:lambda:path/2015-03-31/functions/${alias.aliasArn}/invocations`;
+			const STAGE_VARIABLES_ALIAS = '${stageVariables.alias}';
+			const LAMBDA_ARN = `arn:aws:lambda:${this.config.region}:${this.config.accountId}:function:${alias.functionName}:${STAGE_VARIABLES_ALIAS}`;
+			const URI = `arn:aws:apigateway:${this.config.region}:lambda:path/2015-03-31/functions/${LAMBDA_ARN}/invocations`;
 
 			// Update the integration to point to the alias
 			await API_GATEWAY.updateIntegration({
@@ -552,8 +563,8 @@ class ServerlessLambdaAliasPlugin {
 	 * Finds an API Gateway resource by path.
 	 */
 	findResourceByPath(resources, path) {
-		// Normalize path (ensure it starts with /)
-		const NORMALIZED_PATH = path.startsWith('/') ? path : `/${path}`;
+		// Normalize path (remove leading slash if present)
+		const NORMALIZED_PATH = path.replace(/^\//, '');
 
 		// First check the cache
 		if (this.config.apiGatewayResourceCache.has(NORMALIZED_PATH)) {
@@ -578,7 +589,7 @@ class ServerlessLambdaAliasPlugin {
 		try {
 			const LAMBDA = new this.provider.sdk.Lambda({ region: this.config.region });
 			const SOURCE_ARN = `arn:aws:execute-api:${this.config.region}:${this.config.accountId}:${this.config.restApiId}/*/${method}/${resourceId}`;
-			const STATEMENT_ID = `apigateway-${this.config.restApiId}-${resourceId}-${method}`;
+			const STATEMENT_ID = `apigateway-${this.config.restApiId}-${resourceId}-${method}`.replace(/[^a-zA-Z0-9-_]/g, '-');
 
 			this.debugLog(`Adding permission for API Gateway to invoke Lambda alias: ${alias.aliasArn}`);
 
@@ -629,6 +640,19 @@ class ServerlessLambdaAliasPlugin {
 				restApiId: this.config.restApiId,
 				stageName: STAGE,
 				description: `Deployed by ${PLUGIN_NAME} for alias: ${this.config.alias}`,
+			}).promise();
+
+			// Add stage variable for environment
+			await API_GATEWAY.updateStage({
+				restApiId: this.config.restApiId,
+				stageName: STAGE,
+				patchOperations: [
+					{
+						op: 'replace',
+						path: '/variables/alias',
+						value: this.config.alias,
+					},
+				],
 			}).promise();
 
 			this.debugLog(`Successfully deployed API Gateway to stage: ${STAGE}`, false, 'success');
