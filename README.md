@@ -7,8 +7,6 @@
 Serverless framework plugin to manage AWS Lambda aliases and API Gateway integrations
 </div>
 
-## RELEASE CANDIDATE. USE AT YOUR OWN RISK
-
 This plugin facilitates the management of multiple Lambda function versions and seamlessly updates API Gateway endpoints to reference the appropriate alias.
 
 Key features:
