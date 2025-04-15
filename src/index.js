@@ -539,7 +539,7 @@ class ServerlessLambdaAliasPlugin {
 			}).promise();
 
 			// Add permission for API Gateway to invoke the Lambda alias
-			await this.addLambdaPermission(alias, RESOURCE.id, httpEvent.method);
+			await this.addLambdaPermission(alias, RESOURCE.id, httpEvent.method, httpEvent.path);
 
 			this.debugLog(
 				`Successfully updated integration for path: ${httpEvent.path}, method: ${httpEvent.method} to use alias: ${this.config.alias}`,
@@ -582,7 +582,7 @@ class ServerlessLambdaAliasPlugin {
 	/**
 	 * Adds permission for API Gateway to invoke the Lambda alias.
 	 */
-	async addLambdaPermission(alias, resourceId, method) {
+	async addLambdaPermission(alias, resourceId, method, path) {
 		try {
 			const LAMBDA = new this.provider.sdk.Lambda({ region: this.config.region });
 
@@ -602,7 +602,7 @@ class ServerlessLambdaAliasPlugin {
 				);
 
 			// Both stage invocation and test invocation need permissions
-			const SOURCE_ARN = `arn:aws:execute-api:${this.config.region}:${this.config.accountId}:${this.config.restApiId}/*/${method}/*`;
+			const SOURCE_ARN = `arn:aws:execute-api:${this.config.region}:${this.config.accountId}:${this.config.restApiId}/*/${method}${path.startsWith('/') ? path : `/${path}`}`;
 
 			this.debugLog(`Adding permission for API Gateway to invoke Lambda alias: ${QUALIFIED_FUNCTION_NAME}`);
 
@@ -646,7 +646,7 @@ class ServerlessLambdaAliasPlugin {
 				StatementId: TEST_STATEMENT_ID,
 				Action: 'lambda:InvokeFunction',
 				Principal: 'apigateway.amazonaws.com',
-				SourceArn: `arn:aws:execute-api:${this.config.region}:${this.config.accountId}:${this.config.restApiId}/test-invoke-stage/${method}/*`,
+				SourceArn: `arn:aws:execute-api:${this.config.region}:${this.config.accountId}:${this.config.restApiId}/test-invoke-stage/${method}${path.startsWith('/') ? path : `/${path}`}`,
 			}).promise();
 
 			this.debugLog(
