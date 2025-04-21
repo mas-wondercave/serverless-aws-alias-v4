@@ -20,6 +20,7 @@ class ServerlessLambdaAliasPlugin {
 			region: this.provider.getRegion(),
 			stackName: this.provider.naming.getStackName(),
 			restApiId: this.serverless.service.provider.apiGateway?.restApiId,
+			websocketApiId: this.serverless.service.provider.websocketApiId,
 		};
 
 		this.hooks = {
@@ -75,21 +76,59 @@ class ServerlessLambdaAliasPlugin {
 
 		// Update REST API ID from potential provider configuration
 		this.config.restApiId = this.serverless.service.provider.apiGateway?.restApiId || this.config.restApiId;
+		this.config.websocketApiId = this.serverless.service.provider.websocketApiId || this.config.websocketApiId;
+
+		// Check what event types are used in this service
+		const { hasHttpEvents, hasWebsocketEvents } = this.detectEventTypes();
 
 		this.debugLog(`Initialized with Alias: ${this.config.alias}`, false, 'success');
 		this.debugLog(`Region: ${this.config.region}`);
+
 		if (this.config.excludedFunctions.size > 0) {
 			this.debugLog(`Excluded Functions: ${Array.from(this.config.excludedFunctions).join(', ')}`);
 		}
-		if (this.config.restApiId) {
-			this.debugLog(`Target REST API ID: ${this.config.restApiId}`);
-		} else {
-			this.debugLog(
-				'No REST API ID found in provider config, API Gateway integrations will be skipped.',
-				false,
-				'warning',
-			);
+
+		if (hasHttpEvents) {
+			if (this.config.restApiId) {
+				this.debugLog(`HTTP API Gateway ID: ${this.config.restApiId}`);
+			} else {
+				this.debugLog('No REST API ID found in provider config, HTTP API Gateway integrations will be skipped.', false, 'warning');
+			}
 		}
+
+		if (hasWebsocketEvents) {
+			if (this.config.websocketApiId) {
+				this.debugLog(`WebSocket API Gateway ID: ${this.config.websocketApiId}`);
+			} else {
+				this.debugLog('No WebSocket API ID found in provider config, WebSocket API Gateway integrations will be skipped.', false, 'warning');
+			}
+		}
+
+		if (!hasHttpEvents && !hasWebsocketEvents) {
+			this.debugLog('No API Gateway events detected in functions.', false, 'warning');
+		}
+	}
+
+	/**
+	 * Detects what event types (HTTP, WebSocket) are used in this service.
+	 */
+	detectEventTypes() {
+		const FUNCTIONS = this.serverless.service.functions || {};
+		let hasHttpEvents = false;
+		let hasWebsocketEvents = false;
+
+		// Check all functions' events to detect API types
+		Object.values(FUNCTIONS).forEach((funcDef) => {
+			if (!funcDef.events) return;
+
+			funcDef.events.forEach((event) => {
+				if (event.http) hasHttpEvents = true;
+				if (event.websocket) hasWebsocketEvents = true;
+			});
+		});
+
+		this.debugLog(`Detected event types - HTTP: ${hasHttpEvents}, WebSocket: ${hasWebsocketEvents}`);
+		return { hasHttpEvents, hasWebsocketEvents };
 	}
 
 	/**
@@ -105,15 +144,24 @@ class ServerlessLambdaAliasPlugin {
 			);
 		}
 
-		// Validate API Gateway Method Settings if API Gateway is configured
+		const INVALID_CONFIG = [];
+
+		// Validate HTTP API Gateway Method Settings
 		if (this.config.restApiId) {
 			const INVALID_METHOD_SETTINGS = this.validateApiGatewayMethodSettings(SERVICE.functions);
-			if (INVALID_METHOD_SETTINGS.length > 0) {
-				throw new this.serverless.classes.Error(
-					`Invalid API Gateway method settings found:\n${INVALID_METHOD_SETTINGS.join('\n')}`,
-				);
-			}
+			INVALID_CONFIG.push(...INVALID_METHOD_SETTINGS);
 		}
+
+		// Validate WebSocket API Settings
+		if (this.config.websocketApiId) {
+			const INVALID_WEBSOCKET_SETTINGS = this.validateWebSocketSettings(SERVICE.functions);
+			INVALID_CONFIG.push(...INVALID_WEBSOCKET_SETTINGS);
+		}
+
+		if (INVALID_CONFIG.length > 0) {
+			throw new this.serverless.classes.Error(`Invalid API Gateway configuration found:\n${INVALID_CONFIG.join('\n')}`);
+		}
+
 		this.debugLog('Configuration validated successfully.', false, 'success');
 	}
 
@@ -149,6 +197,40 @@ class ServerlessLambdaAliasPlugin {
 
 				if (event.http?.methodSettings) {
 					this.validateEventMethodSettings(funcName, event, VALID_SETTINGS, INVALID_CONFIG);
+				}
+			});
+		});
+
+		return INVALID_CONFIG;
+	}
+
+	/**
+	 * Validates WebSocket settings for functions
+	 */
+	validateWebSocketSettings(functions) {
+		const INVALID_CONFIG = [];
+		const VALID_ROUTES = ['$connect', '$disconnect', '$default'];
+
+		Object.entries(functions).forEach(([funcName, funcDef]) => {
+			if (!funcDef.events) return;
+
+			funcDef.events.forEach((event) => {
+				if (!event.websocket) return;
+
+				// Check if route is specified
+				if (!event.websocket.route && typeof event.websocket !== 'string') {
+					INVALID_CONFIG.push(`Function '${funcName}' has a websocket event without a specified route`);
+					return;
+				}
+
+				// Get the route (handle both formats: string or object)
+				const ROUTE = typeof event.websocket === 'string' ? event.websocket : event.websocket.route;
+
+				// Validate predefined routes have correct format
+				if (ROUTE.startsWith('$') && !VALID_ROUTES.includes(ROUTE)) {
+					INVALID_CONFIG.push(
+						`Function '${funcName}' has invalid WebSocket route '${ROUTE}'. Predefined routes are: ${VALID_ROUTES.join(', ')}`
+					);
 				}
 			});
 		});
@@ -208,9 +290,22 @@ class ServerlessLambdaAliasPlugin {
 			// Create/update Lambda function aliases
 			const CREATED_ALIASES = await this.createOrUpdateFunctionAliases(FUNCTIONS);
 
-			// Update API Gateway resources if REST API ID is provided
-			if (this.config.restApiId) {
-				await this.updateApiGatewayIntegrations(FUNCTIONS, CREATED_ALIASES);
+			// Update API Gateway integrations for both HTTP and WebSocket events
+			const HTTP_ALIASES = CREATED_ALIASES.filter((alias) => this.hasHttpEvents(alias.name, FUNCTIONS));
+			const WEBSOCKET_ALIASES = CREATED_ALIASES.filter((alias) => this.hasWebSocketEvents(alias.name, FUNCTIONS));
+
+			// Process HTTP API Gateway integrations if needed
+			if (HTTP_ALIASES.length > 0 && this.config.restApiId) {
+				await this.updateApiGatewayIntegrations(FUNCTIONS, HTTP_ALIASES);
+			} else if (HTTP_ALIASES.length > 0) {
+				this.debugLog('HTTP events found but no REST API ID provided. Skipping HTTP integrations.', false, 'warning');
+			}
+
+			// Process WebSocket API Gateway integrations if needed
+			if (WEBSOCKET_ALIASES.length > 0 && this.config.websocketApiId) {
+				await this.updateWebSocketApiIntegrations(FUNCTIONS, WEBSOCKET_ALIASES);
+			} else if (WEBSOCKET_ALIASES.length > 0) {
+				this.debugLog('WebSocket events found but no WebSocket API ID provided. Skipping WebSocket integrations.', false, 'warning');
 			}
 
 			this.debugLog(`${PLUGIN_NAME}: Successfully deployed aliases for ${CREATED_ALIASES.length} functions.`, 'info');
@@ -219,6 +314,26 @@ class ServerlessLambdaAliasPlugin {
 			this.debugLog(error.stack, false, 'error');
 			throw new this.serverless.classes.Error(`Alias deployment failed: ${error.message}`);
 		}
+	}
+
+	/**
+	 * Checks if a function has HTTP events.
+	 */
+	hasHttpEvents(functionName, functions) {
+		const FUNCTION = functions.find((f) => f.name === functionName);
+		if (!FUNCTION) return false;
+
+		return FUNCTION.events.some((event) => event.http);
+	}
+
+	/**
+	 * Checks if a function has WebSocket events.
+	 */
+	hasWebSocketEvents(functionName, functions) {
+		const FUNCTION = functions.find((f) => f.name === functionName);
+		if (!FUNCTION) return false;
+
+		return FUNCTION.events.some((event) => event.websocket);
 	}
 
 	/**
@@ -276,37 +391,37 @@ class ServerlessLambdaAliasPlugin {
 		this.debugLog('Creating or updating Lambda function aliases...');
 		const CREATED_ALIASES = [];
 
-		for (const FUNC of functions) {
+		for (const FUNCTION of functions) {
 			try {
 				// Get the latest function version
-				const VERSION = await this.getLatestFunctionVersion(FUNC.functionName);
+				const VERSION = await this.getLatestFunctionVersion(FUNCTION.functionName);
 
 				if (!VERSION) {
-					this.debugLog(`Could not determine latest version for function: ${FUNC.functionName}`, true, 'error');
+					this.debugLog(`Could not determine latest version for function: ${FUNCTION.functionName}`, true, 'error');
 					continue;
 				}
 
 				// Create or update the alias
-				const ALIAS = await this.createOrUpdateAlias(FUNC.functionName, VERSION);
+				const ALIAS = await this.createOrUpdateAlias(FUNCTION.functionName, VERSION);
 
 				if (ALIAS) {
 					CREATED_ALIASES.push({
-						functionName: FUNC.functionName,
-						name: FUNC.name,
+						functionName: FUNCTION.functionName,
+						name: FUNCTION.name,
 						aliasName: this.config.alias,
 						aliasArn: ALIAS.AliasArn,
 						version: VERSION,
-						events: FUNC.events,
+						events: FUNCTION.events,
 					});
 					this.debugLog(
-						`Created/updated alias '${this.config.alias}' for function '${FUNC.functionName}' pointing to version ${VERSION}`,
+						`Created/updated alias '${this.config.alias}' for function '${FUNCTION.functionName}' pointing to version ${VERSION}`,
 						false,
 						'success',
 					);
 				}
 			} catch (error) {
 				this.debugLog(
-					`Error creating/updating alias for function '${FUNC.functionName}': ${error.message}`,
+					`Error creating/updating alias for function '${FUNCTION.functionName}': ${error.message}`,
 					true,
 					'error',
 				);
@@ -404,24 +519,24 @@ class ServerlessLambdaAliasPlugin {
 	/**
 	 * Updates API Gateway integrations to use the function aliases.
 	 */
-	async updateApiGatewayIntegrations(functions, createdAliases) {
-		if (!this.config.restApiId || createdAliases.length === 0) {
+	async updateApiGatewayIntegrations(functions, httpAliases) {
+		if (!this.config.restApiId || httpAliases.length === 0) {
 			this.debugLog(
-				'Skipping API Gateway integration updates (no REST API ID or no aliases created)',
+				'Skipping API Gateway integration updates (no REST API ID or no HTTP aliases created)',
 				false,
 				'warning',
 			);
 			return;
 		}
 
-		this.debugLog(`Updating API Gateway integrations for ${createdAliases.length} functions...`);
+		this.debugLog(`Updating HTTP API Gateway integrations for ${httpAliases.length} functions...`);
 
 		try {
 			// Get all API Gateway resources
 			const RESOURCES = await this.getApiGatewayResources();
 
 			// For each created alias that has HTTP events, update the API Gateway integration
-			for (const ALIAS of createdAliases) {
+			for (const ALIAS of httpAliases) {
 				// Filter for HTTP events
 				const HTTP_EVENTS = this.getHttpEventsForFunction(ALIAS.name, functions);
 
@@ -439,9 +554,276 @@ class ServerlessLambdaAliasPlugin {
 			// Deploy the API stage to apply changes
 			await this.deployApiGateway();
 
-			this.debugLog('API Gateway integrations updated successfully.', false, 'success');
+			this.debugLog('HTTP API Gateway integrations updated successfully.', false, 'success');
 		} catch (error) {
-			this.debugLog(`Error updating API Gateway integrations: ${error.message}`, true, 'error');
+			this.debugLog(`Error updating HTTP API Gateway integrations: ${error.message}`, true, 'error');
+			throw error;
+		}
+	}
+
+	/**
+	 * Updates WebSocket API integrations to use function aliases.
+	 */
+	async updateWebSocketApiIntegrations(functions, websocketAliases) {
+		if (!this.config.websocketApiId || websocketAliases.length === 0) {
+			this.debugLog(
+				'Skipping WebSocket API integration updates (no WebSocket API ID or no WebSocket aliases created)',
+				false,
+				'warning',
+			);
+			return;
+		}
+
+		this.debugLog(`Updating WebSocket API integrations for ${websocketAliases.length} functions...`);
+
+		try {
+			// Get all WebSocket API routes
+			const ROUTES = await this.getWebSocketApiRoutes();
+
+			// For each created alias that has WebSocket events, update the WebSocket API integration
+			for (const ALIAS of websocketAliases) {
+				// Filter for WebSocket events
+				const WEBSOCKET_EVENTS = this.getWebSocketEventsForFunction(ALIAS.name, functions);
+
+				if (WEBSOCKET_EVENTS.length === 0) {
+					this.debugLog(`No WebSocket events found for function '${ALIAS.name}'. Skipping WebSocket API integration.`);
+					continue;
+				}
+
+				// Update each WebSocket event integration
+				for (const EVENT of WEBSOCKET_EVENTS) {
+					await this.updateWebSocketApiIntegration(ROUTES, ALIAS, EVENT);
+				}
+			}
+
+			// Deploy the WebSocket API stage to apply changes
+			await this.deployWebSocketApi();
+
+			this.debugLog('WebSocket API integrations updated successfully.', false, 'success');
+		} catch (error) {
+			this.debugLog(`Error updating WebSocket API integrations: ${error.message}`, true, 'error');
+			throw error;
+		}
+	}
+
+	/**
+	 * Gets all WebSocket API routes.
+	 */
+	async getWebSocketApiRoutes() {
+		try {
+			this.debugLog(`Getting WebSocket API routes for API ID: ${this.config.websocketApiId}`);
+
+			const API_GATEWAY_V2 = new this.provider.sdk.ApiGatewayV2({ region: this.config.region });
+			const RESULT = await API_GATEWAY_V2.getRoutes({ ApiId: this.config.websocketApiId }).promise();
+
+			this.debugLog(`Found ${RESULT.Items.length} WebSocket API routes.`);
+			return RESULT.Items;
+		} catch (error) {
+			this.debugLog(`Error getting WebSocket API routes: ${error.message}`, true, 'error');
+			throw error;
+		}
+	}
+
+	/**
+	 * Gets all WebSocket events for a specific function.
+	 */
+	getWebSocketEventsForFunction(functionName, functions) {
+		const FUNCTION = functions.find((f) => f.name === functionName);
+		if (!FUNCTION) return [];
+
+		return FUNCTION.events
+			.filter((event) => event.websocket)
+			.map((event) => {
+				// Handle string format (just the route) or object format with route property
+				if (typeof event.websocket === 'string') {
+					return { route: event.websocket };
+				}
+				return { route: event.websocket.route };
+			});
+	}
+
+	/**
+	 * Updates a WebSocket API integration to use the function alias.
+	 */
+	async updateWebSocketApiIntegration(routes, alias, websocketEvent) {
+		try {
+			// Find the route integration for the given route key
+			const ROUTE = routes.find((route) => route.RouteKey === websocketEvent.route);
+
+			if (!ROUTE) {
+				this.debugLog(
+					`Route not found for key '${websocketEvent.route}'. Skipping integration update.`,
+					false,
+					'warning',
+				);
+				return;
+			}
+
+			this.debugLog(`Updating integration for WebSocket route: ${websocketEvent.route}`);
+
+			const API_GATEWAY_V2 = new this.provider.sdk.ApiGatewayV2({ region: this.config.region });
+
+			// Get current integration for the route
+			const INTEGRATIONS = await API_GATEWAY_V2.getIntegrations({
+				ApiId: this.config.websocketApiId,
+			}).promise();
+
+			const ROUTE_INTEGRATION = INTEGRATIONS.Items.find(
+				(integration) =>
+					integration.ApiId === this.config.websocketApiId &&
+					integration.IntegrationId === ROUTE.Target?.split('/').pop(),
+			);
+
+			if (!ROUTE_INTEGRATION) {
+				this.debugLog(`No integration found for route: ${websocketEvent.route}`, false, 'warning');
+				return;
+			}
+
+			// Create the new integration URI pointing to the alias
+			const STAGE_VARIABLES_ALIAS = '${stageVariables.alias}';
+			const LAMBDA_ARN = `arn:aws:lambda:${this.config.region}:${this.config.accountId}:function:${alias.functionName}:${STAGE_VARIABLES_ALIAS}`;
+			const URI = `arn:aws:apigateway:${this.config.region}:lambda:path/2015-03-31/functions/${LAMBDA_ARN}/invocations`;
+
+			// Update the integration to point to the alias
+			await API_GATEWAY_V2.updateIntegration({
+				ApiId: this.config.websocketApiId,
+				IntegrationId: ROUTE_INTEGRATION.IntegrationId,
+				IntegrationUri: URI,
+			}).promise();
+
+			// Add permission for WebSocket API Gateway to invoke the Lambda alias
+			await this.addWebSocketLambdaPermission(alias, ROUTE.RouteId, websocketEvent.route);
+
+			this.debugLog(
+				`Successfully updated integration for WebSocket route: ${websocketEvent.route} to use alias: ${this.config.alias}`,
+				false,
+				'success',
+			);
+		} catch (error) {
+			this.debugLog(
+				`Error updating WebSocket API integration for route '${websocketEvent.route}': ${error.message}`,
+				true,
+				'error',
+			);
+			throw error;
+		}
+	}
+
+	/**
+	 * Adds permission for WebSocket API Gateway to invoke the Lambda alias.
+	 */
+	async addWebSocketLambdaPermission(alias, routeId, routeKey) {
+		try {
+			const LAMBDA = new this.provider.sdk.Lambda({ region: this.config.region });
+
+			// Get the qualified function ARN with the alias
+			const QUALIFIED_FUNCTION_NAME = `${alias.functionName}:${this.config.alias}`;
+
+			// Create statement IDs for the specific route
+			const STATEMENT_ID = `apigateway-ws-${this.config.websocketApiId}-${this.config.alias}-${routeId}`.replace(
+				/[^a-zA-Z0-9-_]/g,
+				'-',
+			);
+
+			const SOURCE_ARN = `arn:aws:execute-api:${this.config.region}:${this.config.accountId}:${this.config.websocketApiId}/*/${routeKey}`;
+
+			this.debugLog(`Adding permission for WebSocket API Gateway to invoke Lambda alias: ${QUALIFIED_FUNCTION_NAME}`);
+
+			// Try to remove any existing permissions first
+			try {
+				await LAMBDA.removePermission({
+					FunctionName: QUALIFIED_FUNCTION_NAME,
+					StatementId: STATEMENT_ID,
+				}).promise();
+			} catch (error) {
+				// Ignore if the permission doesn't exist
+				if (error.code !== 'ResourceNotFoundException') {
+					this.debugLog(`Warning: ${error.message}`, false, 'warning');
+				}
+			}
+
+			// Add the permission
+			await LAMBDA.addPermission({
+				FunctionName: QUALIFIED_FUNCTION_NAME,
+				StatementId: STATEMENT_ID,
+				Action: 'lambda:InvokeFunction',
+				Principal: 'apigateway.amazonaws.com',
+				SourceArn: SOURCE_ARN,
+			}).promise();
+
+			this.debugLog(
+				`Successfully added permission for WebSocket API Gateway to invoke Lambda alias: ${QUALIFIED_FUNCTION_NAME}`,
+				false,
+				'success',
+			);
+		} catch (error) {
+			this.debugLog(`Error adding WebSocket Lambda permission: ${error.message}`, true, 'error');
+			throw error;
+		}
+	}
+
+	/**
+	 * Deploys the WebSocket API to apply changes.
+	 */
+	async deployWebSocketApi() {
+		try {
+			this.debugLog(`Deploying WebSocket API (API ID: ${this.config.websocketApiId})...`);
+
+			const API_GATEWAY_V2 = new this.provider.sdk.ApiGatewayV2({ region: this.config.region });
+			const STAGE = this.provider.getStage();
+
+			// Create a new deployment
+			const DEPLOYMENT = await API_GATEWAY_V2.createDeployment({
+				ApiId: this.config.websocketApiId,
+				Description: `Deployed by ${PLUGIN_NAME} for alias: ${this.config.alias}`,
+			}).promise();
+
+			this.debugLog(`Created deployment with ID: ${DEPLOYMENT.DeploymentId}`);
+
+			// Update or create the stage with the new deployment
+			try {
+				// First try to get the stage
+				await API_GATEWAY_V2.getStage({
+					ApiId: this.config.websocketApiId,
+					StageName: STAGE,
+				}).promise();
+
+				// If stage exists, update it
+				await API_GATEWAY_V2.updateStage({
+					ApiId: this.config.websocketApiId,
+					StageName: STAGE,
+					DeploymentId: DEPLOYMENT.DeploymentId,
+					StageVariables: {
+						alias: this.config.alias,
+					},
+				}).promise();
+
+				this.debugLog(`Updated existing stage: ${STAGE} with new deployment`);
+			} catch (error) {
+				// If stage doesn't exist, create it
+				if (error.code === 'NotFoundException') {
+					await API_GATEWAY_V2.createStage({
+						ApiId: this.config.websocketApiId,
+						StageName: STAGE,
+						DeploymentId: DEPLOYMENT.DeploymentId,
+						StageVariables: {
+							alias: this.config.alias,
+						},
+					}).promise();
+
+					this.debugLog(`Created new stage: ${STAGE} with deployment`);
+				} else {
+					throw error;
+				}
+			}
+
+			// Print endpoint URL
+			const ENDPOINT_URL = `wss://${this.config.websocketApiId}.execute-api.${this.config.region}.amazonaws.com/${STAGE}`;
+			this.debugLog(`${PLUGIN_NAME}: WebSocket API endpoint: ${ENDPOINT_URL}`, 'info');
+
+			this.debugLog(`Successfully deployed WebSocket API to stage: ${STAGE}`, false, 'success');
+		} catch (error) {
+			this.debugLog(`Error deploying WebSocket API: ${error.message}`, true, 'error');
 			throw error;
 		}
 	}
@@ -569,7 +951,7 @@ class ServerlessLambdaAliasPlugin {
 		}
 
 		// Find the resource
-		const RESOURCE = resources.find((r) => r.path === NORMALIZED_PATH);
+		const RESOURCE = resources.find((resource) => resource.path === NORMALIZED_PATH);
 
 		// Cache the result
 		if (RESOURCE) {

@@ -1,6 +1,6 @@
 {
 	"name": "serverless-aws-alias-v4",
-	"version": "0.3.4",
+	"version": "0.4.0-rc",
 	"description": "Serverless framework plugin to manage AWS Lambda aliases and API Gateway integrations",
 	"license": "MIT",
 	"author": {
@@ -18,11 +18,13 @@
 		"alias",
 		"api-gateway",
 		"aws",
+		"http",
 		"lambda",
 		"plugin",
 		"serverless-plugin",
 		"serverless",
-		"v4"
+		"v4",
+		"websocket"
 	],
 	"main": "src/index.js",
 	"scripts": {
