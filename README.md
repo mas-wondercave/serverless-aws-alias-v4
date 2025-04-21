@@ -13,6 +13,8 @@ Key features:
 
 - Automatically creates and maintains Lambda aliases corresponding to deployment stages.
 - Redirects API Gateway integrations to the appropriate Lambda function aliases.
+- Supports both HTTP (REST API) and WebSocket API Gateway events.
+- Handles mixed services with both HTTP and WebSocket events simultaneously.
 - Handles Lambda permission configuration for API Gateway invocations.
 - Ensures API Gateway method settings are properly validated.
 
@@ -45,6 +47,68 @@ provider:
   stage: dev
 ```
 
+### API Gateway Configuration
+
+This plugin supports both HTTP (REST API) and WebSocket event types:
+
+#### HTTP API Gateway
+
+```yaml
+functions:
+  hello:
+    handler: handler.hello
+    events:
+      - http:
+          path: hello
+          method: GET
+```
+
+For HTTP APIs, you may optionally specify a REST API ID in your provider configuration:
+
+```yaml
+provider:
+  apiGateway:
+    restApiId: abcdef123456
+```
+
+#### WebSocket API Gateway
+
+```yaml
+functions:
+  connect:
+    handler: handler.connect
+    events:
+      - websocket: $connect
+
+  disconnect:
+    handler: handler.disconnect
+    events:
+      - websocket: $disconnect
+
+  default:
+    handler: handler.default
+    events:
+      - websocket: $default
+
+  # Custom route
+  message:
+    handler: handler.message
+    events:
+      - websocket:
+          route: sendMessage
+```
+
+For WebSocket APIs, you can specify a WebSocket API ID in your provider configuration:
+
+```yaml
+provider:
+  websocketApiId: wxyz987654
+```
+
+You can mix both HTTP and WebSocket events in the same service, and the plugin will handle both types correctly.
+
+### Excluding Functions
+
 To exclude specific functions from alias management:
 
 ```yaml
@@ -72,6 +136,13 @@ custom:
     excludedFunctions:
       - warmUpPluginDefault
 ```
+
+## Plugin Compatibility and Limitations
+
+When using this plugin, be aware of the following compatibility considerations:
+
+- **Incompatible Plugin**: This plugin is **not compatible** with the [serverless-iam-roles-per-function](https://www.serverless.com/plugins/serverless-iam-roles-per-function) plugin.
+- **Alternative Recommendation**: If you need custom IAM roles, we recommend using [serverless-plugin-custom-roles](https://www.serverless.com/plugins/serverless-plugin-custom-roles), which works seamlessly with this plugin.
 
 ## Debugging
 
