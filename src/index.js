@@ -388,6 +388,7 @@ class ServerlessLambdaAliasPlugin {
 				handler: funcDef.handler,
 				environment: MERGED_ENV,
 				events: funcDef.events || [],
+				description: funcDef.description || '',
 			});
 		});
 
@@ -482,7 +483,7 @@ class ServerlessLambdaAliasPlugin {
 			// Publish a new version
 			const RESULT = await LAMBDA.publishVersion({
 				FunctionName: functionData.functionName,
-				Description: `Published by ${PLUGIN_NAME} for alias: ${this.config.alias}`,
+				Description: functionData.description || '',
 			}).promise();
 
 			this.debugLog(`Published new version ${RESULT.Version} for function: ${functionData.functionName}`, false, 'success');
