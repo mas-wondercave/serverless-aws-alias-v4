@@ -583,10 +583,54 @@ class ServerlessLambdaAliasPlugin {
 				this.debugLog(`No environment variable changes detected for function: ${functionData.functionName}`);
 				return false;
 			} catch (error) {
-				// If alias doesn't exist, consider it as a change
+				// If alias doesn't exist, check the latest version instead
 				if (error.code === 'ResourceNotFoundException') {
-					this.debugLog(`Alias doesn't exist for function: ${functionData.functionName}, treating as new deployment`);
-					return true;
+					this.debugLog(`Alias doesn't exist for function: ${functionData.functionName}, checking latest version...`);
+
+					// Get the latest version number
+					const LATEST_VERSION = await this.getLatestFunctionVersion(functionData.functionName);
+
+					if (!LATEST_VERSION || LATEST_VERSION === '$LATEST') {
+						this.debugLog(`No published version found for function: ${functionData.functionName}, treating as new deployment`);
+						return true;
+					}
+
+					// Get configuration for the latest version
+					const VERSION_CONFIG = await LAMBDA.getFunctionConfiguration({
+						FunctionName: functionData.functionName,
+						Qualifier: LATEST_VERSION
+					}).promise();
+
+					// Get environment variables from the latest version
+					const CURRENT_ENV = VERSION_CONFIG.Environment?.Variables || {};
+					const CONFIG_ENV = functionData.environment;
+
+					// Compare environment variable keys and values
+					const CURRENT_KEYS = Object.keys(CURRENT_ENV).sort();
+					const CONFIG_KEYS = Object.keys(CONFIG_ENV).sort();
+
+					// Quick check if number of keys is different
+					if (CURRENT_KEYS.length !== CONFIG_KEYS.length) {
+						this.debugLog(`Environment variable count changed between latest version and current config for function: ${functionData.functionName}`);
+						return true;
+					}
+
+					// Check for differences in keys
+					if (JSON.stringify(CURRENT_KEYS) !== JSON.stringify(CONFIG_KEYS)) {
+						this.debugLog(`Environment variable keys changed between latest version and current config for function: ${functionData.functionName}`);
+						return true;
+					}
+
+					// Check for differences in values
+					for (const KEY of CONFIG_KEYS) {
+						if (CURRENT_ENV[KEY] !== CONFIG_ENV[KEY]) {
+							this.debugLog(`Environment variable '${KEY}' value changed between latest version and current config for function: ${functionData.functionName}`);
+							return true;
+						}
+					}
+
+					this.debugLog(`No environment variable changes detected between latest version and current config for function: ${functionData.functionName}`);
+					return false;
 				}
 				throw error;
 			}
