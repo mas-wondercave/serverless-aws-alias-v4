@@ -290,6 +290,11 @@ class ServerlessLambdaAliasPlugin {
 			// Create/update Lambda function aliases
 			const CREATED_ALIASES = await this.createOrUpdateFunctionAliases(FUNCTIONS);
 
+			if (CREATED_ALIASES.length === 0) {
+				this.debugLog('No aliases were created or updated. This could be because there are no changes to deploy.', true, 'warning');
+				return;
+			}
+
 			// Update API Gateway integrations for both HTTP and WebSocket events
 			const HTTP_ALIASES = CREATED_ALIASES.filter((alias) => this.hasHttpEvents(alias.name, FUNCTIONS));
 			const WEBSOCKET_ALIASES = CREATED_ALIASES.filter((alias) => this.hasWebSocketEvents(alias.name, FUNCTIONS));
@@ -390,6 +395,7 @@ class ServerlessLambdaAliasPlugin {
 	async createOrUpdateFunctionAliases(functions) {
 		this.debugLog('Creating or updating Lambda function aliases...');
 		const CREATED_ALIASES = [];
+		const FAILED_FUNCTIONS = [];
 
 		for (const FUNCTION of functions) {
 			try {
@@ -398,6 +404,7 @@ class ServerlessLambdaAliasPlugin {
 
 				if (!VERSION) {
 					this.debugLog(`Could not determine latest version for function: ${FUNCTION.functionName}`, true, 'error');
+					FAILED_FUNCTIONS.push(FUNCTION.functionName);
 					continue;
 				}
 
@@ -425,7 +432,13 @@ class ServerlessLambdaAliasPlugin {
 					true,
 					'error',
 				);
+				FAILED_FUNCTIONS.push(FUNCTION.functionName);
 			}
+		}
+
+		// Check if any functions failed
+		if (FAILED_FUNCTIONS.length > 0) {
+			this.debugLog(`WARNING: Failed to process aliases for ${FAILED_FUNCTIONS.length} functions: ${FAILED_FUNCTIONS.join(', ')}`, true, 'warning');
 		}
 
 		return CREATED_ALIASES;
@@ -439,22 +452,46 @@ class ServerlessLambdaAliasPlugin {
 			this.debugLog(`Getting latest version for function: ${functionName}`);
 
 			const LAMBDA = new this.provider.sdk.Lambda({ region: this.config.region });
-			const RESULT = await LAMBDA.listVersionsByFunction({
-				FunctionName: functionName,
-				MaxItems: 20,
-			}).promise();
 
-			// Filter out $LATEST and sort versions in descending order
-			const VERSIONS = RESULT.Versions.filter((version) => version.Version !== '$LATEST').sort(
-				(a, b) => parseInt(b.Version) - parseInt(a.Version),
-			);
+			// First check if the function exists
+			try {
+				await LAMBDA.getFunction({
+					FunctionName: functionName,
+				}).promise();
+			} catch (funcError) {
+				// If function doesn't exist, log and return null
+				if (funcError.code === 'ResourceNotFoundException') {
+					this.debugLog(`Function '${functionName}' not found`, true, 'warning');
+					return null;
+				}
 
-			if (VERSIONS.length === 0) {
-				this.debugLog(`No versions found for function: ${functionName}`, true, 'warning');
-				return null;
+				throw funcError;
 			}
 
-			return VERSIONS[0].Version;
+			// Try to get versions - if no versions exist, we'll use $LATEST
+			try {
+				const RESULT = await LAMBDA.listVersionsByFunction({
+					FunctionName: functionName,
+					MaxItems: 20,
+				}).promise();
+
+				// Filter out $LATEST and sort versions in descending order
+				const VERSIONS = RESULT.Versions.filter((version) => version.Version !== '$LATEST').sort(
+					(a, b) => parseInt(b.Version) - parseInt(a.Version),
+				);
+
+				if (VERSIONS.length > 0) {
+					return VERSIONS[0].Version;
+				}
+
+				// If no published versions found, use the unqualified $LATEST and note this
+				this.debugLog(`No numbered versions found for function: ${functionName}, falling back to $LATEST`, false, 'warning');
+				return '$LATEST';
+			} catch (error) {
+				// If versions can't be listed but function exists, fall back to $LATEST
+				this.debugLog(`Error listing versions for '${functionName}': ${error.message}, falling back to $LATEST`, false, 'warning');
+				return '$LATEST';
+			}
 		} catch (error) {
 			this.debugLog(`Error getting latest version for function '${functionName}': ${error.message}`, true, 'error');
 			throw error;
@@ -466,7 +503,16 @@ class ServerlessLambdaAliasPlugin {
 	 */
 	async createOrUpdateAlias(functionName, version) {
 		try {
+			// Validate inputs
+			if (!functionName) throw new Error('Function name is required');
+			if (!version) throw new Error('Function version is required');
+
 			const LAMBDA = new this.provider.sdk.Lambda({ region: this.config.region });
+
+			// Special handling for $LATEST
+			if (version === '$LATEST') {
+				this.debugLog(`Using $LATEST version for function '${functionName}' since no published versions found`, false, 'warning');
+			}
 
 			// First, try to get the existing alias
 			try {
@@ -491,7 +537,7 @@ class ServerlessLambdaAliasPlugin {
 				}
 
 				this.debugLog(
-					`Alias '${this.config.alias}' for function '${functionName}' already points to version ${version}. No update needed.`,
+					`Alias '${this.config.alias}' for function '${functionName}' already points to version ${version}. No update needed.`, true, 'success',
 				);
 				return EXISTING_ALIAS;
 			} catch (error) {
