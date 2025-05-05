@@ -598,7 +598,7 @@ class ServerlessLambdaAliasPlugin {
 					// Get configuration for the latest version
 					const VERSION_CONFIG = await LAMBDA.getFunctionConfiguration({
 						FunctionName: functionData.functionName,
-						Qualifier: LATEST_VERSION
+						Qualifier: LATEST_VERSION,
 					}).promise();
 
 					// Get environment variables from the latest version
