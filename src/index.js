@@ -290,6 +290,11 @@ class ServerlessLambdaAliasPlugin {
 			// Create/update Lambda function aliases
 			const CREATED_ALIASES = await this.createOrUpdateFunctionAliases(FUNCTIONS);
 
+			if (CREATED_ALIASES.length === 0) {
+				this.debugLog('No aliases were created or updated.', true, 'warning');
+				return;
+			}
+
 			// Update API Gateway integrations for both HTTP and WebSocket events
 			const HTTP_ALIASES = CREATED_ALIASES.filter((alias) => this.hasHttpEvents(alias.name, FUNCTIONS));
 			const WEBSOCKET_ALIASES = CREATED_ALIASES.filter((alias) => this.hasWebSocketEvents(alias.name, FUNCTIONS));
@@ -371,12 +376,17 @@ class ServerlessLambdaAliasPlugin {
 				return;
 			}
 
+			// Merge provider environment with function environment
+			const PROVIDER_ENV = SERVICES.provider.environment || {};
+			const FUNCTION_ENV = funcDef.environment || {};
+			const MERGED_ENV = { ...PROVIDER_ENV, ...FUNCTION_ENV };
+
 			// Add function to the list for alias deployment
 			FUNCTIONS.push({
 				name: funcName,
 				functionName: funcDef.name || this.provider.naming.getLambdaLogicalId(funcName),
 				handler: funcDef.handler,
-				environment: funcDef.environment || {},
+				environment: MERGED_ENV,
 				events: funcDef.events || [],
 			});
 		});
@@ -390,19 +400,31 @@ class ServerlessLambdaAliasPlugin {
 	async createOrUpdateFunctionAliases(functions) {
 		this.debugLog('Creating or updating Lambda function aliases...');
 		const CREATED_ALIASES = [];
+		const FAILED_FUNCTIONS = [];
 
 		for (const FUNCTION of functions) {
 			try {
-				// Get the latest function version
-				const VERSION = await this.getLatestFunctionVersion(FUNCTION.functionName);
+				// Check if environment variables have changed
+				const IS_ENV_CHANGED = await this.haveEnvironmentVariablesChanged(FUNCTION);
 
-				if (!VERSION) {
+				// Get the latest function version or publish a new one if env vars changed
+				let version;
+
+				if (IS_ENV_CHANGED) {
+					this.debugLog(`Environment variables changed for function: ${FUNCTION.functionName}. Publishing new version...`);
+					version = await this.publishNewFunctionVersion(FUNCTION);
+				} else {
+					version = await this.getLatestFunctionVersion(FUNCTION.functionName);
+				}
+
+				if (!version) {
 					this.debugLog(`Could not determine latest version for function: ${FUNCTION.functionName}`, true, 'error');
+					FAILED_FUNCTIONS.push(FUNCTION.functionName);
 					continue;
 				}
 
 				// Create or update the alias
-				const ALIAS = await this.createOrUpdateAlias(FUNCTION.functionName, VERSION);
+				const ALIAS = await this.createOrUpdateAlias(FUNCTION.functionName, version);
 
 				if (ALIAS) {
 					CREATED_ALIASES.push({
@@ -410,11 +432,11 @@ class ServerlessLambdaAliasPlugin {
 						name: FUNCTION.name,
 						aliasName: this.config.alias,
 						aliasArn: ALIAS.AliasArn,
-						version: VERSION,
+						version: version,
 						events: FUNCTION.events,
 					});
 					this.debugLog(
-						`Created/updated alias '${this.config.alias}' for function '${FUNCTION.functionName}' pointing to version ${VERSION}`,
+						`Created/updated alias '${this.config.alias}' for function '${FUNCTION.functionName}' pointing to version ${version}`,
 						false,
 						'success',
 					);
@@ -425,10 +447,154 @@ class ServerlessLambdaAliasPlugin {
 					true,
 					'error',
 				);
+				FAILED_FUNCTIONS.push(FUNCTION.functionName);
 			}
 		}
 
+		// Check if any functions failed
+		if (FAILED_FUNCTIONS.length > 0) {
+			this.debugLog(`WARNING: Failed to process aliases for ${FAILED_FUNCTIONS.length} functions: ${FAILED_FUNCTIONS.join(', ')}`, true, 'warning');
+		}
+
 		return CREATED_ALIASES;
+	}
+
+	/**
+	 * Publishes a new version of the Lambda function with updated configuration.
+	 */
+	async publishNewFunctionVersion(functionData) {
+		try {
+			this.debugLog(`Publishing new version for function: ${functionData.functionName}`);
+
+			const LAMBDA = new this.provider.sdk.Lambda({ region: this.config.region });
+
+			// Update the function configuration with new environment variables
+			await LAMBDA.updateFunctionConfiguration({
+				FunctionName: functionData.functionName,
+				Environment: {
+					Variables: functionData.environment,
+				},
+			}).promise();
+
+			// Wait for the update to complete
+			await this.waitForFunctionUpdateToComplete(functionData.functionName);
+
+			// Publish a new version
+			const RESULT = await LAMBDA.publishVersion({
+				FunctionName: functionData.functionName,
+				Description: `Published by ${PLUGIN_NAME} for alias: ${this.config.alias}`,
+			}).promise();
+
+			this.debugLog(`Published new version ${RESULT.Version} for function: ${functionData.functionName}`, false, 'success');
+			return RESULT.Version;
+
+		} catch (error) {
+			this.debugLog(`Error publishing new version for function '${functionData.functionName}': ${error.message}`, true, 'error');
+			throw error;
+		}
+	}
+
+	/**
+	 * Waits for a function update operation to complete.
+	 */
+	async waitForFunctionUpdateToComplete(functionName) {
+		this.debugLog(`Waiting for function update to complete: ${functionName}`);
+
+		const LAMBDA = new this.provider.sdk.Lambda({ region: this.config.region });
+		let isUpdating = true;
+		let retries = 0;
+		const MAX_RETRIES = 30;
+
+		while (isUpdating && retries < MAX_RETRIES) {
+			try {
+				const CONFIG = await LAMBDA.getFunctionConfiguration({
+					FunctionName: functionName,
+				}).promise();
+
+				if (CONFIG.LastUpdateStatus === 'Successful') {
+					isUpdating = false;
+					this.debugLog(`Function update completed successfully: ${functionName}`);
+				} else if (CONFIG.LastUpdateStatus === 'Failed') {
+					throw new Error(`Function update failed: ${CONFIG.LastUpdateStatusReason || 'Unknown reason'}`);
+				} else {
+					// Still in progress, wait and retry
+					await new Promise((resolve) => setTimeout(resolve, 1000));
+					retries++;
+				}
+			} catch (error) {
+				if (error.code === 'ResourceNotFoundException') {
+					throw error;
+				}
+				// For other errors, wait and retry
+				await new Promise((resolve) => setTimeout(resolve, 1000));
+				retries++;
+			}
+		}
+
+		if (retries >= MAX_RETRIES) {
+			throw new Error(`Function update timed out after ${MAX_RETRIES} retries: ${functionName}`);
+		}
+	}
+
+	/**
+	 * Checks if environment variables have changed between serverless config and deployed function.
+	 * Returns true if changes are detected, false otherwise.
+	 */
+	async haveEnvironmentVariablesChanged(functionData) {
+		try {
+			const LAMBDA = new this.provider.sdk.Lambda({ region: this.config.region });
+
+			// Try to get the function alias configuration
+			try {
+				const ALIAS_CONFIG = await LAMBDA.getFunctionConfiguration({
+					FunctionName: functionData.functionName,
+					Qualifier: this.config.alias,
+				}).promise();
+
+				// Get current environment variables from the alias
+				const CURRENT_ENV = ALIAS_CONFIG.Environment?.Variables || {};
+				const CONFIG_ENV = functionData.environment;
+
+				// Compare environment variable keys and values
+				const CURRENT_KEYS = Object.keys(CURRENT_ENV).sort();
+				const CONFIG_KEYS = Object.keys(CONFIG_ENV).sort();
+
+				// Quick check if number of keys is different
+				if (CURRENT_KEYS.length !== CONFIG_KEYS.length) {
+					this.debugLog(`Environment variable count changed for function: ${functionData.functionName}`);
+					return true;
+				}
+
+				// Check for differences in keys
+				if (JSON.stringify(CURRENT_KEYS) !== JSON.stringify(CONFIG_KEYS)) {
+					this.debugLog(`Environment variable keys changed for function: ${functionData.functionName}`);
+					return true;
+				}
+
+				// Check for differences in values
+				for (const KEY of CONFIG_KEYS) {
+					if (CURRENT_ENV[KEY] !== CONFIG_ENV[KEY]) {
+						this.debugLog(`Environment variable '${KEY}' value changed for function: ${functionData.functionName}`);
+						return true;
+					}
+				}
+
+				this.debugLog(`No environment variable changes detected for function: ${functionData.functionName}`);
+				return false;
+			} catch (error) {
+				// If alias doesn't exist, consider it as a change
+				if (error.code === 'ResourceNotFoundException') {
+					this.debugLog(`Alias doesn't exist for function: ${functionData.functionName}, treating as new deployment`);
+					return true;
+				}
+				throw error;
+			}
+
+		} catch (error) {
+			this.debugLog(`Error checking environment variables for function '${functionData.functionName}': ${error.message}`, true, 'error');
+			// In case of error, assume changes to be safe
+			return true;
+		}
 	}
 
 	/**
@@ -439,22 +605,47 @@ class ServerlessLambdaAliasPlugin {
 			this.debugLog(`Getting latest version for function: ${functionName}`);
 
 			const LAMBDA = new this.provider.sdk.Lambda({ region: this.config.region });
-			const RESULT = await LAMBDA.listVersionsByFunction({
-				FunctionName: functionName,
-				MaxItems: 20,
-			}).promise();
 
-			// Filter out $LATEST and sort versions in descending order
-			const VERSIONS = RESULT.Versions.filter((version) => version.Version !== '$LATEST').sort(
-				(a, b) => parseInt(b.Version) - parseInt(a.Version),
-			);
+			// First check if the function exists
+			try {
+				await LAMBDA.getFunction({
+					FunctionName: functionName,
+				}).promise();
+			} catch (funcError) {
+				// If function doesn't exist, log and return null
+				if (funcError.code === 'ResourceNotFoundException') {
+					this.debugLog(`Function '${functionName}' not found`, true, 'warning');
+					return null;
+				}
 
-			if (VERSIONS.length === 0) {
-				this.debugLog(`No versions found for function: ${functionName}`, true, 'warning');
-				return null;
+				throw funcError;
 			}
 
-			return VERSIONS[0].Version;
+			// Try to get versions - if no versions exist, we'll use $LATEST
+			try {
+				const RESULT = await LAMBDA.listVersionsByFunction({
+					FunctionName: functionName,
+					MaxItems: 20,
+				}).promise();
+
+				// Filter out $LATEST and sort versions in descending order
+				const VERSIONS = RESULT.Versions.filter((version) => version.Version !== '$LATEST').sort(
+					(a, b) => parseInt(b.Version) - parseInt(a.Version),
+				);
+
+				if (VERSIONS.length > 0) {
+					// Return the most recent version
+					return VERSIONS[0].Version;
+				}
+
+				// If no published versions found, use the unqualified $LATEST and note this
+				this.debugLog(`No numbered versions found for function: ${functionName}, falling back to $LATEST`, false, 'warning');
+				return '$LATEST';
+			} catch (error) {
+				// If versions can't be listed but function exists, fall back to $LATEST
+				this.debugLog(`Error listing versions for '${functionName}': ${error.message}, falling back to $LATEST`, false, 'warning');
+				return '$LATEST';
+			}
 		} catch (error) {
 			this.debugLog(`Error getting latest version for function '${functionName}': ${error.message}`, true, 'error');
 			throw error;
@@ -466,7 +657,16 @@ class ServerlessLambdaAliasPlugin {
 	 */
 	async createOrUpdateAlias(functionName, version) {
 		try {
+			// Validate inputs
+			if (!functionName) throw new Error('Function name is required');
+			if (!version) throw new Error('Function version is required');
+
 			const LAMBDA = new this.provider.sdk.Lambda({ region: this.config.region });
+
+			// Special handling for $LATEST
+			if (version === '$LATEST') {
+				this.debugLog(`Using $LATEST version for function '${functionName}' since no published versions found`, false, 'warning');
+			}
 
 			// First, try to get the existing alias
 			try {
@@ -491,7 +691,7 @@ class ServerlessLambdaAliasPlugin {
 				}
 
 				this.debugLog(
-					`Alias '${this.config.alias}' for function '${functionName}' already points to version ${version}. No update needed.`,
+					`Alias '${this.config.alias}' for function '${functionName}' already points to version ${version}. No update needed.`, false, 'success',
 				);
 				return EXISTING_ALIAS;
 			} catch (error) {
