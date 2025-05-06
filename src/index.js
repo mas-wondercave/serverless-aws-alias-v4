@@ -280,7 +280,7 @@ class ServerlessLambdaAliasPlugin {
 	 */
 	async deployAliasWorkflow() {
 		try {
-			this.debugLog(`${PLUGIN_NAME}: Starting alias deployment workflow...`, 'info');
+			this.debugLog(`${PLUGIN_NAME}: Starting alias deployment workflow...`, false, 'info');
 
 			// Get AWS account ID (needed for ARNs)
 			await this.getAwsAccountId();
@@ -329,7 +329,11 @@ class ServerlessLambdaAliasPlugin {
 				);
 			}
 
-			this.debugLog(`${PLUGIN_NAME}: Successfully deployed aliases for ${CREATED_ALIASES.length} functions.`, 'info');
+			this.debugLog(
+				`${PLUGIN_NAME}: Successfully deployed aliases for ${CREATED_ALIASES.length} functions.`,
+				false,
+				'info',
+			);
 		} catch (error) {
 			this.debugLog(`Error in alias deployment workflow: ${error.message}`, true, 'error');
 			this.debugLog(error.stack, false, 'error');
@@ -1221,7 +1225,7 @@ class ServerlessLambdaAliasPlugin {
 
 			// Print endpoint URL
 			const ENDPOINT_URL = `wss://${this.config.websocketApiId}.execute-api.${this.config.region}.amazonaws.com/${STAGE}`;
-			this.debugLog(`${PLUGIN_NAME}: WebSocket API endpoint: ${ENDPOINT_URL}`, 'info');
+			this.debugLog(`${PLUGIN_NAME}: WebSocket API endpoint: ${ENDPOINT_URL}`, false, 'info');
 
 			this.debugLog(`Successfully deployed WebSocket API to stage: ${STAGE}`, false, 'success');
 		} catch (error) {
@@ -1480,7 +1484,7 @@ class ServerlessLambdaAliasPlugin {
 
 			// Print endpoint URL
 			const ENDPOINT_URL = `https://${this.config.restApiId}.execute-api.${this.config.region}.amazonaws.com/${STAGE}`;
-			this.debugLog(`${PLUGIN_NAME}: API Gateway endpoint: ${ENDPOINT_URL}`, 'info');
+			this.debugLog(`${PLUGIN_NAME}: API Gateway endpoint: ${ENDPOINT_URL}`, false, 'info');
 
 			this.debugLog(`Successfully deployed API Gateway to stage: ${STAGE}`, false, 'success');
 		} catch (error) {
