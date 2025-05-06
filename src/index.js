@@ -4,6 +4,8 @@ const PLUGIN_NAME = 'serverless-aws-alias-v4';
 
 // Determine debug logging state (can be set via SLS_DEBUG=true or --verbose flag)
 const IS_DEBUG = process.env?.SLS_DEBUG || process.argv.includes('--verbose') || process.argv.includes('-v');
+// Check if force deployment is requested
+const IS_FORCE = process.argv.includes('--force');
 
 class ServerlessLambdaAliasPlugin {
 	constructor(serverless) {
@@ -425,46 +427,46 @@ class ServerlessLambdaAliasPlugin {
 
 		for (const FUNCTION of functions) {
 			try {
-				// First check if the alias exists
-				const EXISTING_ALIAS = await this.getExistingAlias(FUNCTION.functionName);
 				let version;
 
-				if (EXISTING_ALIAS) {
-					// If alias exists, check if config or code has changed compared to the specific version
-					// the alias currently points to
-					const HAS_CHANGES = await this.haveFunctionChanges(FUNCTION, EXISTING_ALIAS.FunctionVersion);
+				// First check if the alias exists
+				const EXISTING_ALIAS = await this.getExistingAlias(FUNCTION.functionName);
+
+				// Get the latest function version
+				const LATEST_VERSION = await this.getLatestFunctionVersion(FUNCTION.functionName);
+
+				// Determine which version to use for the alias
+				if (IS_FORCE && LATEST_VERSION) {
+					// When force flag is set and we have a latest version (freshly deployed by serverless), always use it
+					this.debugLog(
+						`Force flag detected for function: ${FUNCTION.functionName}. Using latest version ${LATEST_VERSION}`,
+					);
+					version = LATEST_VERSION;
+				} else if (!LATEST_VERSION) {
+					// No versions exist (with or without alias), publish a new one
+					this.debugLog(`No existing versions for function: ${FUNCTION.functionName}. Publishing new version...`);
+					version = await this.publishNewFunctionVersion(FUNCTION);
+				} else {
+					// Check if there are changes compared to the relevant version
+					const COMPARE_VERSION = EXISTING_ALIAS ? EXISTING_ALIAS.FunctionVersion : LATEST_VERSION;
+					const HAS_CHANGES = await this.haveFunctionChanges(FUNCTION, COMPARE_VERSION);
 
 					if (HAS_CHANGES) {
+						// Changes detected, publish a new version
+						this.debugLog(`Changes detected for function: ${FUNCTION.functionName}. Publishing new version...`);
+						version = await this.publishNewFunctionVersion(FUNCTION);
+					} else if (!EXISTING_ALIAS) {
+						// For new aliases with no changes, use latest version
 						this.debugLog(
-							`Changes detected for function alias: ${FUNCTION.functionName}:${this.config.alias}. Publishing new version...`,
+							`No changes detected for new function: ${FUNCTION.functionName}. Using latest version ${LATEST_VERSION}`,
 						);
-						version = await this.publishNewFunctionVersion(FUNCTION);
+						version = LATEST_VERSION;
 					} else {
-						// No changes detected, skip this function alias
+						// No changes for existing alias, skip this function
+						this.debugLog(
+							`No changes detected for existing function alias: ${FUNCTION.functionName}:${this.config.alias}. Skipping.`,
+						);
 						continue;
-					}
-				} else {
-					// If alias doesn't exist, get the latest version or publish a new one
-					const LATEST_VERSION = await this.getLatestFunctionVersion(FUNCTION.functionName);
-
-					// For a new alias, check against the latest version if it exists
-					if (LATEST_VERSION) {
-						const HAS_CHANGES = await this.haveFunctionChanges(FUNCTION, LATEST_VERSION);
-
-						if (HAS_CHANGES) {
-							this.debugLog(`Changes detected for function: ${FUNCTION.functionName}. Publishing new version...`);
-							version = await this.publishNewFunctionVersion(FUNCTION);
-						} else {
-							// No changes detected, use the latest version
-							this.debugLog(
-								`No changes detected for function: ${FUNCTION.functionName}. Using latest version ${LATEST_VERSION}`,
-							);
-							version = LATEST_VERSION;
-						}
-					} else {
-						// No versions exist, publish a new one
-						this.debugLog(`No existing versions for function: ${FUNCTION.functionName}. Publishing new version...`);
-						version = await this.publishNewFunctionVersion(FUNCTION);
 					}
 				}
 
