@@ -142,15 +142,15 @@ custom:
 When using this plugin, be aware of the following compatibility considerations:
 
 - **Incompatible Plugin**: This plugin is **not compatible** with the [serverless-iam-roles-per-function](https://www.serverless.com/plugins/serverless-iam-roles-per-function) plugin.
-- **Alternative Recommendation**: If you need custom IAM roles, we recommend using [serverless-plugin-custom-roles](https://www.serverless.com/plugins/serverless-plugin-custom-roles), which works seamlessly with this plugin.
+- **Alternative Recommendation**: If you need custom IAM roles, we recommend using [serverless-iam-roles-per-function-v4](https://github.com/Castlenine/serverless-iam-roles-per-function-v4), which works seamlessly with this plugin.
 
 ## Debugging
 
 By default, only error messages are displayed. To view detailed logs, use one of these methods:
 
 - Set the environment variable `SLS_DEBUG=*`
-- Use the `--verbose` flag when deploying: `sls deploy --verbose`
-- Enable verbose logging in your alias configuration:
+- Use the `--verbose` or `-v` flag when deploying: `sls deploy --verbose`
+- Enable verbose logging in your custom configuration:
 
 ```yaml
 custom:
@@ -161,6 +161,14 @@ custom:
   alias:
     verbose: true
 ```
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE.md](./LICENSE.md) file for details.
+
+## Contributing
+
+Contributions are welcome! Feel free to submit a pull request or open an issue.
 
 [npm]: https://www.npmjs.com/package/serverless-aws-alias-v4
 [npm.badge]: https://img.shields.io/npm/v/serverless-aws-alias-v4
