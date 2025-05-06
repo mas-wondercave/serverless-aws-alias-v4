@@ -92,7 +92,11 @@ class ServerlessLambdaAliasPlugin {
 			if (this.config.restApiId) {
 				this.debugLog(`HTTP API Gateway ID: ${this.config.restApiId}`);
 			} else {
-				this.debugLog('No REST API ID found in provider config, HTTP API Gateway integrations will be skipped.', false, 'warning');
+				this.debugLog(
+					'No REST API ID found in provider config, HTTP API Gateway integrations will be skipped.',
+					false,
+					'warning',
+				);
 			}
 		}
 
@@ -100,7 +104,11 @@ class ServerlessLambdaAliasPlugin {
 			if (this.config.websocketApiId) {
 				this.debugLog(`WebSocket API Gateway ID: ${this.config.websocketApiId}`);
 			} else {
-				this.debugLog('No WebSocket API ID found in provider config, WebSocket API Gateway integrations will be skipped.', false, 'warning');
+				this.debugLog(
+					'No WebSocket API ID found in provider config, WebSocket API Gateway integrations will be skipped.',
+					false,
+					'warning',
+				);
 			}
 		}
 
@@ -291,7 +299,11 @@ class ServerlessLambdaAliasPlugin {
 			const CREATED_ALIASES = await this.createOrUpdateFunctionAliases(FUNCTIONS);
 
 			if (CREATED_ALIASES.length === 0) {
-				this.debugLog('No aliases were created or updated. Consider using the --force flag to force alias deployment if needed.', true, 'warning');
+				this.debugLog(
+					'No aliases were created or updated. Consider using the --force flag to force alias deployment if needed.',
+					false,
+					'warning',
+				);
 				return;
 			}
 
@@ -310,7 +322,11 @@ class ServerlessLambdaAliasPlugin {
 			if (WEBSOCKET_ALIASES.length > 0 && this.config.websocketApiId) {
 				await this.updateWebSocketApiIntegrations(FUNCTIONS, WEBSOCKET_ALIASES);
 			} else if (WEBSOCKET_ALIASES.length > 0) {
-				this.debugLog('WebSocket events found but no WebSocket API ID provided. Skipping WebSocket integrations.', false, 'warning');
+				this.debugLog(
+					'WebSocket events found but no WebSocket API ID provided. Skipping WebSocket integrations.',
+					false,
+					'warning',
+				);
 			}
 
 			this.debugLog(`${PLUGIN_NAME}: Successfully deployed aliases for ${CREATED_ALIASES.length} functions.`, 'info');
@@ -415,7 +431,9 @@ class ServerlessLambdaAliasPlugin {
 					const HAS_CHANGES = await this.haveFunctionChanges(FUNCTION, EXISTING_ALIAS.FunctionVersion);
 
 					if (HAS_CHANGES) {
-						this.debugLog(`Changes detected for function alias: ${FUNCTION.functionName}:${this.config.alias}. Publishing new version...`);
+						this.debugLog(
+							`Changes detected for function alias: ${FUNCTION.functionName}:${this.config.alias}. Publishing new version...`,
+						);
 						version = await this.publishNewFunctionVersion(FUNCTION);
 					} else {
 						// No changes detected, skip this function alias
@@ -434,7 +452,9 @@ class ServerlessLambdaAliasPlugin {
 							version = await this.publishNewFunctionVersion(FUNCTION);
 						} else {
 							// No changes detected, use the latest version
-							this.debugLog(`No changes detected for function: ${FUNCTION.functionName}. Using latest version ${LATEST_VERSION}`);
+							this.debugLog(
+								`No changes detected for function: ${FUNCTION.functionName}. Using latest version ${LATEST_VERSION}`,
+							);
 							version = LATEST_VERSION;
 						}
 					} else {
@@ -480,7 +500,11 @@ class ServerlessLambdaAliasPlugin {
 
 		// Check if any functions failed
 		if (FAILED_FUNCTIONS.length > 0) {
-			this.debugLog(`WARNING: Failed to process aliases for ${FAILED_FUNCTIONS.length} functions: ${FAILED_FUNCTIONS.join(', ')}`, true, 'warning');
+			this.debugLog(
+				`WARNING: Failed to process aliases for ${FAILED_FUNCTIONS.length} functions: ${FAILED_FUNCTIONS.join(', ')}`,
+				true,
+				'warning',
+			);
 		}
 
 		return CREATED_ALIASES;
@@ -528,17 +552,23 @@ class ServerlessLambdaAliasPlugin {
 				// If the alias exists and already points to the specified version,
 				// no changes are needed
 				if (ALIAS_CONFIG.FunctionVersion === specificVersion) {
-					this.debugLog(`Alias ${this.config.alias} already points to version ${specificVersion} for function: ${functionData.functionName}`);
+					this.debugLog(
+						`Alias ${this.config.alias} already points to version ${specificVersion} for function: ${functionData.functionName}`,
+					);
 					return false;
 				}
 
-				this.debugLog(`Alias ${this.config.alias} points to version ${ALIAS_CONFIG.FunctionVersion}, checking if version ${specificVersion} has changes`);
+				this.debugLog(
+					`Alias ${this.config.alias} points to version ${ALIAS_CONFIG.FunctionVersion}, checking if version ${specificVersion} has changes`,
+				);
 			} catch (error) {
 				// If the alias doesn't exist, that's fine - we'll continue with change detection
 				if (error.code !== 'ResourceNotFoundException') {
 					throw error;
 				}
-				this.debugLog(`Alias ${this.config.alias} doesn't exist for function: ${functionData.functionName}, proceeding with change detection`);
+				this.debugLog(
+					`Alias ${this.config.alias} doesn't exist for function: ${functionData.functionName}, proceeding with change detection`,
+				);
 			}
 
 			// Get the function's current configuration (from $LATEST)
@@ -605,20 +635,26 @@ class ServerlessLambdaAliasPlugin {
 
 				// Check if current version env vars differ from latest function env vars
 				if (JSON.stringify(CURRENT_KEYS) !== JSON.stringify(LATEST_KEYS)) {
-					this.debugLog(`Environment variable keys changed between versions for function: ${functionData.functionName}`);
+					this.debugLog(
+						`Environment variable keys changed between versions for function: ${functionData.functionName}`,
+					);
 					return true;
 				}
 
 				// Check if env vars in config differ from current version
 				if (JSON.stringify(CURRENT_KEYS) !== JSON.stringify(CONFIG_KEYS)) {
-					this.debugLog(`Environment variable keys in config different from current version for function: ${functionData.functionName}`);
+					this.debugLog(
+						`Environment variable keys in config different from current version for function: ${functionData.functionName}`,
+					);
 					return true;
 				}
 
 				// Compare values for each key between versions
 				for (const KEY of CURRENT_KEYS) {
 					if (CURRENT_ENV[KEY] !== LATEST_ENV[KEY]) {
-						this.debugLog(`Environment variable '${KEY}' value changed between versions for function: ${functionData.functionName}`);
+						this.debugLog(
+							`Environment variable '${KEY}' value changed between versions for function: ${functionData.functionName}`,
+						);
 						return true;
 					}
 				}
@@ -626,7 +662,9 @@ class ServerlessLambdaAliasPlugin {
 				// Compare values for each key between current version and config
 				for (const KEY of CURRENT_KEYS) {
 					if (CURRENT_ENV[KEY] !== CONFIG_ENV[KEY]) {
-						this.debugLog(`Environment variable '${KEY}' value in config different from current version for function: ${functionData.functionName}`);
+						this.debugLog(
+							`Environment variable '${KEY}' value in config different from current version for function: ${functionData.functionName}`,
+						);
 						return true;
 					}
 				}
@@ -645,14 +683,19 @@ class ServerlessLambdaAliasPlugin {
 			} catch (error) {
 				// If version doesn't exist, assume it's new
 				if (error.code === 'ResourceNotFoundException') {
-					this.debugLog(`Version ${specificVersion} doesn't exist for function: ${functionData.functionName}, treating as new deployment`);
+					this.debugLog(
+						`Version ${specificVersion} doesn't exist for function: ${functionData.functionName}, treating as new deployment`,
+					);
 					return true;
 				}
 				throw error;
 			}
-
 		} catch (error) {
-			this.debugLog(`Error checking function changes for '${functionData.functionName}': ${error.message}`, true, 'error');
+			this.debugLog(
+				`Error checking function changes for '${functionData.functionName}': ${error.message}`,
+				true,
+				'error',
+			);
 			// In case of error, assume changes to be safe
 			return true;
 		}
@@ -684,11 +727,18 @@ class ServerlessLambdaAliasPlugin {
 				Description: functionData.description || '',
 			}).promise();
 
-			this.debugLog(`Published new version ${RESULT.Version} for function: ${functionData.functionName}`, false, 'success');
+			this.debugLog(
+				`Published new version ${RESULT.Version} for function: ${functionData.functionName}`,
+				false,
+				'success',
+			);
 			return RESULT.Version;
-
 		} catch (error) {
-			this.debugLog(`Error publishing new version for function '${functionData.functionName}': ${error.message}`, true, 'error');
+			this.debugLog(
+				`Error publishing new version for function '${functionData.functionName}': ${error.message}`,
+				true,
+				'error',
+			);
 			throw error;
 		}
 	}
@@ -777,11 +827,19 @@ class ServerlessLambdaAliasPlugin {
 				}
 
 				// If no published versions found, use the unqualified $LATEST and note this
-				this.debugLog(`No numbered versions found for function: ${functionName}, falling back to $LATEST`, false, 'warning');
+				this.debugLog(
+					`No numbered versions found for function: ${functionName}, falling back to $LATEST`,
+					false,
+					'warning',
+				);
 				return '$LATEST';
 			} catch (error) {
 				// If versions can't be listed but function exists, fall back to $LATEST
-				this.debugLog(`Error listing versions for '${functionName}': ${error.message}, falling back to $LATEST`, false, 'warning');
+				this.debugLog(
+					`Error listing versions for '${functionName}': ${error.message}, falling back to $LATEST`,
+					false,
+					'warning',
+				);
 				return '$LATEST';
 			}
 		} catch (error) {
@@ -803,7 +861,11 @@ class ServerlessLambdaAliasPlugin {
 
 			// Special handling for $LATEST
 			if (version === '$LATEST') {
-				this.debugLog(`Using $LATEST version for function '${functionName}' since no published versions found`, false, 'warning');
+				this.debugLog(
+					`Using $LATEST version for function '${functionName}' since no published versions found`,
+					false,
+					'warning',
+				);
 			}
 
 			// First, try to get the existing alias
@@ -829,7 +891,9 @@ class ServerlessLambdaAliasPlugin {
 				}
 
 				this.debugLog(
-					`Alias '${this.config.alias}' for function '${functionName}' already points to version ${version}. No update needed.`, false, 'success',
+					`Alias '${this.config.alias}' for function '${functionName}' already points to version ${version}. No update needed.`,
+					false,
+					'success',
 				);
 				return EXISTING_ALIAS;
 			} catch (error) {
