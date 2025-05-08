@@ -12,7 +12,6 @@ class ServerlessLambdaAliasPlugin {
 		this.serverless = serverless;
 		this.provider = serverless.getProvider('aws');
 
-		// Centralized plugin configuration
 		this.config = {
 			alias: this.stage, // Default alias to stage
 			excludedFunctions: new Set(),
@@ -20,7 +19,6 @@ class ServerlessLambdaAliasPlugin {
 			accountId: null,
 			verbose: false,
 			region: this.provider.getRegion(),
-			stackName: this.provider.naming.getStackName(),
 			restApiId: this.serverless.service.provider.apiGateway?.restApiId,
 			websocketApiId: this.serverless.service.provider.websocketApiId,
 		};
@@ -75,10 +73,6 @@ class ServerlessLambdaAliasPlugin {
 
 		// Verbose logging
 		this.config.verbose = CUSTOM_ALIAS_CONFIG.verbose || false;
-
-		// Update REST API ID from potential provider configuration
-		this.config.restApiId = this.serverless.service.provider.apiGateway?.restApiId || this.config.restApiId;
-		this.config.websocketApiId = this.serverless.service.provider.websocketApiId || this.config.websocketApiId;
 
 		// Check what event types are used in this service
 		const { hasHttpEvents, hasWebsocketEvents } = this.detectEventTypes();
@@ -338,7 +332,7 @@ class ServerlessLambdaAliasPlugin {
 			);
 		} catch (error) {
 			this.debugLog(`Error in alias deployment workflow: ${error.message}`, true, 'error');
-			this.debugLog(error.stack, false, 'error');
+			this.debugLog(error?.stack, false, 'error');
 			throw new this.serverless.classes.Error(`Alias deployment failed: ${error.message}`);
 		}
 	}
