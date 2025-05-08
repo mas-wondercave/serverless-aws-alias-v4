@@ -63,7 +63,7 @@ functions:
           method: GET
 ```
 
-For HTTP APIs, you may optionally specify a REST API ID in your provider configuration:
+For HTTP APIs, you can specify a REST API ID in your provider configuration:
 
 ```yaml
 provider:
