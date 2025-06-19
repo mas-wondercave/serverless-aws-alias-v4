@@ -542,35 +542,6 @@ class ServerlessLambdaAliasPlugin {
 		try {
 			const LAMBDA = new this.provider.sdk.Lambda({ region: this.config.region });
 
-			// First, check if the specified version already has the alias attached
-			try {
-				const ALIAS_CONFIG = await LAMBDA.getAlias({
-					FunctionName: functionData.functionName,
-					Name: this.config.alias,
-				}).promise();
-
-				// If the alias exists and already points to the specified version,
-				// no changes are needed
-				if (ALIAS_CONFIG.FunctionVersion === specificVersion) {
-					this.debugLog(
-						`Alias ${this.config.alias} already points to version ${specificVersion} for function: ${functionData.functionName}`,
-					);
-					return false;
-				}
-
-				this.debugLog(
-					`Alias ${this.config.alias} points to version ${ALIAS_CONFIG.FunctionVersion}, checking if version ${specificVersion} has changes`,
-				);
-			} catch (error) {
-				// If the alias doesn't exist, that's fine - we'll continue with change detection
-				if (error.code !== 'ResourceNotFoundException') {
-					throw error;
-				}
-				this.debugLog(
-					`Alias ${this.config.alias} doesn't exist for function: ${functionData.functionName}, proceeding with change detection`,
-				);
-			}
-
 			// Get the function's current configuration (from $LATEST)
 			const LATEST_CONFIG = await LAMBDA.getFunctionConfiguration({
 				FunctionName: functionData.functionName,
@@ -676,6 +647,37 @@ class ServerlessLambdaAliasPlugin {
 				if (JSON.stringify(VERSION_LAYER_ARNS) !== JSON.stringify(LATEST_LAYER_ARNS)) {
 					this.debugLog(`Layers changed for function: ${functionData.functionName}`);
 					return true;
+				}
+
+				// Finally, check if the specified version already has the alias attached
+				// This is checked last because even if the alias points to this version,
+				// the function code or configuration could have changed since that version was created
+				try {
+					const ALIAS_CONFIG = await LAMBDA.getAlias({
+						FunctionName: functionData.functionName,
+						Name: this.config.alias,
+					}).promise();
+
+					// If the alias exists and already points to the specified version,
+					// and we've reached this point (no changes detected above), no changes are needed
+					if (ALIAS_CONFIG.FunctionVersion === specificVersion) {
+						this.debugLog(
+							`Alias ${this.config.alias} already points to version ${specificVersion} for function: ${functionData.functionName}, and no changes detected`,
+						);
+						return false;
+					}
+
+					this.debugLog(
+						`Alias ${this.config.alias} points to version ${ALIAS_CONFIG.FunctionVersion}, but no changes detected for version ${specificVersion}`,
+					);
+				} catch (error) {
+					// If the alias doesn't exist, that's fine - we'll continue
+					if (error.code !== 'ResourceNotFoundException') {
+						throw error;
+					}
+					this.debugLog(
+						`Alias ${this.config.alias} doesn't exist for function: ${functionData.functionName}, no changes detected`,
+					);
 				}
 
 				this.debugLog(`No function changes detected for: ${functionData.functionName}`);
