@@ -74,6 +74,14 @@ class ServerlessLambdaAliasPlugin {
 		// Verbose logging
 		this.config.verbose = CUSTOM_ALIAS_CONFIG.verbose || false;
 
+		// Load Deploy ApiGateway (with CLI flag override)
+		this.config.skipApiGateway = CUSTOM_ALIAS_CONFIG.skipApiGateway !== undefined 
+				? CUSTOM_ALIAS_CONFIG.skipApiGateway : false;
+
+		// Load Deploy WebSocket Gateway (with CLI flag override)
+		this.config.skipWebSocketGateway = CUSTOM_ALIAS_CONFIG.skipWebSocketGateway !== undefined 
+			? CUSTOM_ALIAS_CONFIG.skipWebSocketGateway : false;
+
 		// Check what event types are used in this service
 		const { hasHttpEvents, hasWebsocketEvents } = this.detectEventTypes();
 
@@ -164,6 +172,27 @@ class ServerlessLambdaAliasPlugin {
 
 		if (INVALID_CONFIG.length > 0) {
 			throw new this.serverless.classes.Error(`Invalid API Gateway configuration found:\n${INVALID_CONFIG.join('\n')}`);
+		}
+
+		// Warn if API Gateway deployment is disabled
+		if (this.config.skipApiGateway) {
+			this.debugLog(
+				'WARNING: API Gateway deployment is disabled. ' +
+				'Ensure APIs are deployed manually if integration URIs have changed.',
+				true,
+				'warning'
+			);
+		}
+
+		// Warn if WebSocket Gateway deployment is disabled
+
+		if (this.config.skipWebSocketGateway) {
+			this.debugLog(
+				'WARNING: WebSocket Gateway deployment is disabled. ' +
+				'Ensure APIs are deployed manually if integration URIs have changed.',
+				true,
+				'warning'
+			);
 		}
 
 		this.debugLog('Configuration validated successfully.', false, 'success');
@@ -956,9 +985,12 @@ class ServerlessLambdaAliasPlugin {
 			}
 
 			// Deploy the API stage to apply changes
-			await this.deployApiGateway();
-
-			this.debugLog('HTTP API Gateway integrations updated successfully.', false, 'success');
+			if (this.config.skipApiGateway) {
+				this.debugLog('HTTP API Gateway integrations updated, deployment skipped as configured.', false, 'success');
+			} else {
+				await this.deployApiGateway();
+				this.debugLog('HTTP API Gateway deployed and integrations updated successfully.', false, 'success');
+			}
 		} catch (error) {
 			this.debugLog(`Error updating HTTP API Gateway integrations: ${error.message}`, true, 'error');
 			throw error;
@@ -1001,9 +1033,12 @@ class ServerlessLambdaAliasPlugin {
 			}
 
 			// Deploy the WebSocket API stage to apply changes
-			await this.deployWebSocketApi();
-
-			this.debugLog('WebSocket API integrations updated successfully.', false, 'success');
+			if (this.config.skipWebSocketGateway) {
+				this.debugLog('WebSocket API integrations updated, deployment skipped as configured.', false, 'success');
+			} else {
+				await this.deployWebSocketApi();
+				this.debugLog('WebSocket API deployed and integrations updated successfully.', false, 'success');
+			}
 		} catch (error) {
 			this.debugLog(`Error updating WebSocket API integrations: ${error.message}`, true, 'error');
 			throw error;

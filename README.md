@@ -47,6 +47,22 @@ provider:
   stage: dev
 ```
 
+### Complete Configuration Example
+
+Here's a comprehensive example showing all available configuration options:
+
+```yaml
+custom:
+  alias:
+    name: ${opt:stage, 'dev'}        # Alias name (defaults to stage)
+    excludedFunctions:               # Functions to exclude from alias management
+      - warmUpPluginDefault
+      - some-other-function
+    skipApiGateway: false           # Skip HTTP API Gateway deployment (default: false)
+    skipWebSocketGateway: false     # Skip WebSocket API Gateway deployment (default: false)
+    verbose: true                   # Enable detailed logging (default: false)
+```
+
 ### API Gateway Configuration
 
 This plugin supports both HTTP (REST API) and WebSocket event types:
@@ -136,6 +152,52 @@ custom:
     excludedFunctions:
       - warmUpPluginDefault
 ```
+
+### Skipping API Gateway Deployments
+
+By default, the plugin automatically deploys both HTTP API Gateway and WebSocket API Gateway after updating integrations. You can control this behavior using configuration options to skip deployments when needed.
+
+#### Skip HTTP API Gateway Deployment
+
+To skip HTTP API Gateway deployment and only update integrations:
+
+```yaml
+custom:
+  alias:
+    name: dev
+    skipApiGateway: true
+```
+
+#### Skip WebSocket API Gateway Deployment
+
+To skip WebSocket API Gateway deployment and only update integrations:
+
+```yaml
+custom:
+  alias:
+    name: dev
+    skipWebSocketGateway: true
+```
+
+#### Skip Both API Gateways
+
+You can skip both types of deployments:
+
+```yaml
+custom:
+  alias:
+    name: dev
+    skipApiGateway: true
+    skipWebSocketGateway: true
+```
+
+#### Use Cases for Skipping Deployments
+
+Skipping API Gateway deployments can be useful in scenarios such as:
+
+- **Development workflows**: When you want to update function aliases without triggering API Gateway deployments
+- **Blue-Green deployments**: When Blue-Green API Gateway deployments are handled separately in your CI/CD pipeline
+- **Testing environments**: When you need to update function integrations without affecting live API endpoints
 
 ## Plugin Compatibility and Limitations
 
